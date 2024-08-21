@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import json
-from typing import Optional, Union
-from opentelemetry import trace
-from opentelemetry.trace import SpanKind, Span
-from opentelemetry.trace.status import Status, StatusCode
-from opentelemetry.trace.propagation import set_span_in_context
-from openai import NOT_GIVEN
-from .span_attributes import LLMSpanAttributes, SpanAttributes
+from typing import Optional
 
-from .utils import silently_fail, extract_content
-from opentelemetry.trace import Tracer
+from openai import NOT_GIVEN
+
+from opentelemetry import trace
+from opentelemetry.trace import Span, SpanKind, Tracer
+from opentelemetry.trace.propagation import set_span_in_context
+from opentelemetry.trace.status import Status, StatusCode
+
+from .span_attributes import LLMSpanAttributes, SpanAttributes
+from .utils import extract_content, silently_fail
 
 
 def chat_completions_create(original_method, version, tracer: Tracer):
@@ -36,24 +37,14 @@ def chat_completions_create(original_method, version, tracer: Tracer):
                 tool_calls = []
                 for tool_call in tools:
                     tool_call_dict = {
-                        "id": tool_call.id if hasattr(tool_call, "id") else "",
-                        "type": (
-                            tool_call.type
-                            if hasattr(tool_call, "type")
-                            else ""
-                        ),
+                        "id": getattr(tool_call, "id", ""),
+                        "type": getattr(tool_call, "type", ""),
                     }
                     if hasattr(tool_call, "function"):
                         tool_call_dict["function"] = {
-                            "name": (
-                                tool_call.function.name
-                                if hasattr(tool_call.function, "name")
-                                else ""
-                            ),
-                            "arguments": (
-                                tool_call.function.arguments
-                                if hasattr(tool_call.function, "arguments")
-                                else ""
+                            "name": getattr(tool_call.function, "name", ""),
+                            "arguments": getattr(
+                                tool_call.function, "arguments", ""
                             ),
                         }
                     tool_calls.append(tool_call_dict)
@@ -105,25 +96,27 @@ def get_tool_calls(item):
         return getattr(item, "tool_calls", None)
 
 
+def is_given(value):
+    return value is not None and value != NOT_GIVEN
+
+
 @silently_fail
 def _set_input_attributes(span, kwargs, attributes: LLMSpanAttributes):
     tools = []
 
-    if (
-        kwargs.get("functions") is not None
-        and kwargs.get("functions") != NOT_GIVEN
-    ):
-        for function in kwargs.get("functions"):
+    if is_given(kwargs.get("functions")):
+        for function in kwargs.get("functions", []):
             tools.append(
                 json.dumps({"type": "function", "function": function})
             )
 
-    if kwargs.get("tools") is not None and kwargs.get("tools") != NOT_GIVEN:
+    if is_given(kwargs.get("tools")):
         tools.append(json.dumps(kwargs.get("tools")))
 
     if tools:
         set_span_attribute(span, SpanAttributes.LLM_TOOLS, json.dumps(tools))
 
+    # FIXME: double check pydantic usage
     for field, value in attributes.model_dump(by_alias=True).items():
         set_span_attribute(span, field, value)
 
@@ -131,7 +124,7 @@ def _set_input_attributes(span, kwargs, attributes: LLMSpanAttributes):
 @silently_fail
 def _set_response_attributes(span, kwargs, result):
     set_span_attribute(span, SpanAttributes.LLM_RESPONSE_MODEL, result.model)
-    if hasattr(result, "choices") and result.choices is not None:
+    if getattr(result, "choices", None) is not None:
         responses = [
             {
                 "role": (
@@ -154,20 +147,15 @@ def _set_response_attributes(span, kwargs, result):
         ]
         set_event_completion(span, responses)
 
-    if (
-        hasattr(result, "system_fingerprint")
-        and result.system_fingerprint is not None
-        and result.system_fingerprint != NOT_GIVEN
-    ):
+    if is_given(getattr(result, "system_fingerprint", None)):
         set_span_attribute(
             span,
             SpanAttributes.LLM_SYSTEM_FINGERPRINT,
             result.system_fingerprint,
         )
     # Get the usage
-    if hasattr(result, "usage") and result.usage is not None:
-        usage = result.usage
-        if usage is not None:
+    if getattr(result, "usage", None) is not None:
+        if result.usage is not None:
             set_span_attribute(
                 span,
                 SpanAttributes.LLM_USAGE_PROMPT_TOKENS,
@@ -219,11 +207,8 @@ def set_span_attribute(span: Span, name, value):
 
 
 def is_streaming(kwargs):
-    return non_numerical_value_is_set(kwargs.get("stream"))
-
-
-def non_numerical_value_is_set(value: Optional[Union[bool, str]]):
-    return bool(value) and value != NOT_GIVEN
+    stream: Optional[bool] = kwargs.get("stream")
+    return stream and stream != NOT_GIVEN
 
 
 def get_llm_request_attributes(

@@ -25,7 +25,7 @@ from opentelemetry.trace import Span, SpanKind, Tracer
 from opentelemetry.trace.propagation import set_span_in_context
 from opentelemetry.trace.status import Status, StatusCode
 
-from .utils import extract_content, silently_fail
+from .utils import extract_content
 
 
 def chat_completions_create(original_method, version, tracer: Tracer):
@@ -109,7 +109,6 @@ def _set_input_attributes(span, attributes):
         set_span_attribute(span, field, value)
 
 
-@silently_fail
 def _set_response_attributes(span, kwargs, result):
     set_span_attribute(span, genai.GEN_AI_RESPONSE_MODEL, result.model)
     if getattr(result, "choices", None) is not None:

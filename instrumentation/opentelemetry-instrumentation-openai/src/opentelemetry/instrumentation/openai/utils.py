@@ -12,28 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-
-
-def silently_fail(func):
-    """
-    A decorator that catches exceptions thrown by the decorated function and logs them as warnings.
-    """
-
-    logger = logging.getLogger(func.__module__)
-
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as exception:
-            logger.warning(
-                "Failed to execute %s, error: %s",
-                func.__name__,
-                str(exception),
-            )
-
-    return wrapper
-
 
 def extract_content(choice):
     if not hasattr(choice, "message"):

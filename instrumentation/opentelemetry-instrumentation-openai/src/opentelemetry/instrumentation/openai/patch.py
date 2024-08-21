@@ -18,11 +18,13 @@ from typing import Optional
 from openai import NOT_GIVEN
 
 from opentelemetry import trace
+from opentelemetry.semconv._incubating.attributes import (
+    gen_ai_attributes as genai,
+)
 from opentelemetry.trace import Span, SpanKind, Tracer
 from opentelemetry.trace.propagation import set_span_in_context
 from opentelemetry.trace.status import Status, StatusCode
 
-from .span_attributes import LLMSpanAttributes, SpanAttributes
 from .utils import extract_content, silently_fail
 
 
@@ -52,11 +54,9 @@ def chat_completions_create(original_method, version, tracer: Tracer):
             else:
                 llm_prompts.append(item)
 
-        span_attributes = {
-            **get_llm_request_attributes(kwargs, prompts=llm_prompts),
+        attributes = {
+            **get_llm_request_attributes(kwargs),
         }
-
-        attributes = LLMSpanAttributes(**span_attributes)
 
         span_name = f"{attributes.gen_ai_operation_name} {attributes.gen_ai_request_model}"
 
@@ -65,7 +65,11 @@ def chat_completions_create(original_method, version, tracer: Tracer):
             kind=SpanKind.CLIENT,
             context=set_span_in_context(trace.get_current_span()),
         )
-        _set_input_attributes(span, kwargs, attributes)
+
+        _set_input_attributes(span, attributes)
+        prompts = get_llm_request_prompts(kwargs, llm_prompts)
+        if prompts is not None:
+            set_event_prompt(span, prompts)
 
         try:
             result = wrapped(*args, **kwargs)
@@ -100,30 +104,14 @@ def is_given(value):
     return value is not None and value != NOT_GIVEN
 
 
-@silently_fail
-def _set_input_attributes(span, kwargs, attributes: LLMSpanAttributes):
-    tools = []
-
-    if is_given(kwargs.get("functions")):
-        for function in kwargs.get("functions", []):
-            tools.append(
-                json.dumps({"type": "function", "function": function})
-            )
-
-    if is_given(kwargs.get("tools")):
-        tools.append(json.dumps(kwargs.get("tools")))
-
-    if tools:
-        set_span_attribute(span, SpanAttributes.LLM_TOOLS, json.dumps(tools))
-
-    # FIXME: double check pydantic usage
-    for field, value in attributes.model_dump(by_alias=True).items():
+def _set_input_attributes(span, attributes):
+    for field, value in attributes.items():
         set_span_attribute(span, field, value)
 
 
 @silently_fail
 def _set_response_attributes(span, kwargs, result):
-    set_span_attribute(span, SpanAttributes.LLM_RESPONSE_MODEL, result.model)
+    set_span_attribute(span, genai.GEN_AI_RESPONSE_MODEL, result.model)
     if getattr(result, "choices", None) is not None:
         responses = [
             {
@@ -148,50 +136,42 @@ def _set_response_attributes(span, kwargs, result):
         set_event_completion(span, responses)
 
     if is_given(getattr(result, "system_fingerprint", None)):
+        # FIXME: WIP semconv
         set_span_attribute(
             span,
-            SpanAttributes.LLM_SYSTEM_FINGERPRINT,
+            "gen_ai.system_fingerprint",
             result.system_fingerprint,
         )
+
     # Get the usage
     if getattr(result, "usage", None) is not None:
         if result.usage is not None:
             set_span_attribute(
                 span,
-                SpanAttributes.LLM_USAGE_PROMPT_TOKENS,
+                genai.GEN_AI_USAGE_PROMPT_TOKENS,
                 result.usage.prompt_tokens,
             )
             set_span_attribute(
                 span,
-                SpanAttributes.LLM_USAGE_COMPLETION_TOKENS,
+                genai.GEN_AI_USAGE_COMPLETION_TOKENS,
                 result.usage.completion_tokens,
-            )
-            set_span_attribute(
-                span,
-                SpanAttributes.LLM_USAGE_TOTAL_TOKENS,
-                result.usage.total_tokens,
             )
 
 
 def set_event_prompt(span: Span, prompt):
     span.add_event(
-        name=SpanAttributes.LLM_CONTENT_PROMPT,
+        name="gen_ai.content.prompt",
         attributes={
-            SpanAttributes.LLM_PROMPTS: prompt,
+            genai.GEN_AI_PROMPT: prompt,
         },
     )
 
 
-def set_span_attributes(span: Span, attributes: dict):
-    for field, value in attributes.model_dump(by_alias=True).items():
-        set_span_attribute(span, field, value)
-
-
 def set_event_completion(span: Span, result_content):
     span.add_event(
-        name=SpanAttributes.LLM_CONTENT_COMPLETION,
+        name="gen_ai.content.completion",
         attributes={
-            SpanAttributes.LLM_COMPLETIONS: json.dumps(result_content),
+            genai.GEN_AI_COMPLETION: json.dumps(result_content),
         },
     )
 
@@ -199,11 +179,7 @@ def set_event_completion(span: Span, result_content):
 def set_span_attribute(span: Span, name, value):
     if value is not None:
         if value != "" or value != NOT_GIVEN:
-            if name == SpanAttributes.LLM_PROMPTS:
-                set_event_prompt(span, value)
-            else:
-                span.set_attribute(name, value)
-    return
+            span.set_attribute(name, value)
 
 
 def is_streaming(kwargs):
@@ -211,10 +187,7 @@ def is_streaming(kwargs):
     return stream and stream != NOT_GIVEN
 
 
-def get_llm_request_attributes(
-    kwargs, prompts=None, model=None, operation_name="chat"
-):
-
+def get_llm_request_prompts(kwargs, prompts):
     user = kwargs.get("user")
     if prompts is None:
         prompts = (
@@ -222,6 +195,11 @@ def get_llm_request_attributes(
             if "prompt" in kwargs
             else None
         )
+    return json.dumps(prompts) if prompts else None
+
+
+def get_llm_request_attributes(kwargs, model=None, operation_name="chat"):
+
     top_k = (
         kwargs.get("n")
         or kwargs.get("k")
@@ -230,28 +208,15 @@ def get_llm_request_attributes(
     )
 
     top_p = kwargs.get("p") or kwargs.get("top_p")
-    tools = kwargs.get("tools")
     return {
-        SpanAttributes.LLM_OPERATION_NAME: operation_name,
-        SpanAttributes.LLM_REQUEST_MODEL: model or kwargs.get("model"),
-        SpanAttributes.LLM_IS_STREAMING: kwargs.get("stream"),
-        SpanAttributes.LLM_REQUEST_TEMPERATURE: kwargs.get("temperature"),
-        SpanAttributes.LLM_TOP_K: top_k,
-        SpanAttributes.LLM_PROMPTS: json.dumps(prompts) if prompts else None,
-        SpanAttributes.LLM_USER: user,
-        SpanAttributes.LLM_REQUEST_TOP_P: top_p,
-        SpanAttributes.LLM_REQUEST_MAX_TOKENS: kwargs.get("max_tokens"),
-        SpanAttributes.LLM_SYSTEM_FINGERPRINT: kwargs.get(
-            "system_fingerprint"
-        ),
-        SpanAttributes.LLM_PRESENCE_PENALTY: kwargs.get("presence_penalty"),
-        SpanAttributes.LLM_FREQUENCY_PENALTY: kwargs.get("frequency_penalty"),
-        SpanAttributes.LLM_REQUEST_SEED: kwargs.get("seed"),
-        SpanAttributes.LLM_TOOLS: json.dumps(tools) if tools else None,
-        SpanAttributes.LLM_TOOL_CHOICE: kwargs.get("tool_choice"),
-        SpanAttributes.LLM_REQUEST_LOGPROPS: kwargs.get("logprobs"),
-        SpanAttributes.LLM_REQUEST_LOGITBIAS: kwargs.get("logit_bias"),
-        SpanAttributes.LLM_REQUEST_TOP_LOGPROPS: kwargs.get("top_logprobs"),
+        genai.GEN_AI_OPERATION_NAME: operation_name,
+        genai.GEN_AI_REQUEST_MODEL: model or kwargs.get("model"),
+        genai.GEN_AI_REQUEST_TEMPERATURE: kwargs.get("temperature"),
+        genai.GEN_AI_REQUEST_TOP_P: top_p,
+        genai.GEN_AI_REQUEST_MAX_TOKENS: kwargs.get("max_tokens"),
+        genai.GEN_AI_PRESENCE_PENALTY: kwargs.get("presence_penalty"),
+        genai.GEN_AI_FREQUENCY_PENALTY: kwargs.get("frequency_penalty"),
+        genai.GEN_AI_TOP_K: top_k,
     }
 
 
@@ -284,18 +249,13 @@ class StreamWrapper:
         if self._span_started:
             set_span_attribute(
                 self.span,
-                SpanAttributes.LLM_USAGE_PROMPT_TOKENS,
+                genai.GEN_AI_USAGE_INPUT_TOKENS,
                 self.prompt_tokens,
             )
             set_span_attribute(
                 self.span,
-                SpanAttributes.LLM_USAGE_COMPLETION_TOKENS,
+                genai.GEN_AI_USAGE_OUTPUT_TOKENS,
                 self.completion_tokens,
-            )
-            set_span_attribute(
-                self.span,
-                SpanAttributes.LLM_USAGE_TOTAL_TOKENS,
-                self.prompt_tokens + self.completion_tokens,
             )
             set_event_completion(
                 self.span,
@@ -334,7 +294,7 @@ class StreamWrapper:
         if hasattr(chunk, "model") and chunk.model is not None:
             set_span_attribute(
                 self.span,
-                SpanAttributes.LLM_RESPONSE_MODEL,
+                genai.GEN_AI_RESPONSE_MODEL,
                 chunk.model,
             )
 

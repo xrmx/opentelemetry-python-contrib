@@ -123,10 +123,14 @@ class TestSystemMetrics(TestBase):
         if self.implementation == "pypy":
             self.assertEqual(len(metric_names), 20)
         else:
-            self.assertEqual(len(metric_names), 21)
-        observer_names.append(
-            f"process.runtime.{self.implementation}.gc_count",
-        )
+            self.assertEqual(len(metric_names), 23)
+            observer_names.extend(
+                [
+                    "cpython.gc.collections",
+                    "cpython.gc.collected_objects",
+                    "cpython.gc.uncollectable_objects",
+                ]
+            )
 
         for observer in metric_names:
             self.assertIn(observer, observer_names)
@@ -142,7 +146,9 @@ class TestSystemMetrics(TestBase):
         }
 
         if self.implementation != "pypy":
-            runtime_config["process.runtime.gc_count"] = None
+            runtime_config["process.runtime.gc.collections"] = None
+            runtime_config["process.runtime.gc.collected_objects"] = None
+            runtime_config["process.runtime.gc.uncollectable_objects"] = None
 
         reader = InMemoryMetricReader()
         meter_provider = MeterProvider(metric_readers=[reader])
@@ -166,10 +172,14 @@ class TestSystemMetrics(TestBase):
         if self.implementation == "pypy":
             self.assertEqual(len(metric_names), 5)
         else:
-            self.assertEqual(len(metric_names), 6)
-        observer_names.append(
-            f"process.runtime.{self.implementation}.gc_count"
-        )
+            self.assertEqual(len(metric_names), 8)
+            observer_names.extend(
+                [
+                    "cpython.gc.collections",
+                    "cpython.gc.collected_objects",
+                    "cpython.gc.uncollectable_objects",
+                ]
+            )
 
         for observer in metric_names:
             self.assertIn(observer, observer_names)
@@ -793,21 +803,71 @@ class TestSystemMetrics(TestBase):
             f"process.runtime.{self.implementation}.cpu_time", expected
         )
 
-    @mock.patch("gc.get_count")
+    @mock.patch("gc.get_stats")
     @skipIf(
         python_implementation().lower() == "pypy", "not supported for pypy"
     )
-    def test_runtime_get_count(self, mock_gc_get_count):
-        mock_gc_get_count.configure_mock(**{"return_value": (1, 2, 3)})
+    def test_runtime_gc_collections(self, mock_gc_get_stats):
+        mock_gc_get_stats.configure_mock(
+            **{
+                "return_value": [
+                    {"collections": 10, "collected": 100, "uncollectable": 0},
+                    {"collections": 5, "collected": 50, "uncollectable": 0},
+                    {"collections": 2, "collected": 20, "uncollectable": 0},
+                ]
+            }
+        )
 
         expected = [
-            _SystemMetricsResult({"count": "0"}, 1),
-            _SystemMetricsResult({"count": "1"}, 2),
-            _SystemMetricsResult({"count": "2"}, 3),
+            _SystemMetricsResult({"cpython.gc.generation": 0}, 10),
+            _SystemMetricsResult({"cpython.gc.generation": 1}, 5),
+            _SystemMetricsResult({"cpython.gc.generation": 2}, 2),
         ]
-        self._test_metrics(
-            f"process.runtime.{self.implementation}.gc_count", expected
+        self._test_metrics("cpython.gc.collections", expected)
+
+    @mock.patch("gc.get_stats")
+    @skipIf(
+        python_implementation().lower() == "pypy", "not supported for pypy"
+    )
+    def test_runtime_gc_collected_objects(self, mock_gc_get_stats):
+        mock_gc_get_stats.configure_mock(
+            **{
+                "return_value": [
+                    {"collections": 10, "collected": 100, "uncollectable": 0},
+                    {"collections": 5, "collected": 50, "uncollectable": 0},
+                    {"collections": 2, "collected": 20, "uncollectable": 0},
+                ]
+            }
         )
+
+        expected = [
+            _SystemMetricsResult({"cpython.gc.generation": 0}, 100),
+            _SystemMetricsResult({"cpython.gc.generation": 1}, 50),
+            _SystemMetricsResult({"cpython.gc.generation": 2}, 20),
+        ]
+        self._test_metrics("cpython.gc.collected_objects", expected)
+
+    @mock.patch("gc.get_stats")
+    @skipIf(
+        python_implementation().lower() == "pypy", "not supported for pypy"
+    )
+    def test_runtime_gc_uncollectable_objects(self, mock_gc_get_stats):
+        mock_gc_get_stats.configure_mock(
+            **{
+                "return_value": [
+                    {"collections": 10, "collected": 100, "uncollectable": 1},
+                    {"collections": 5, "collected": 50, "uncollectable": 2},
+                    {"collections": 2, "collected": 20, "uncollectable": 3},
+                ]
+            }
+        )
+
+        expected = [
+            _SystemMetricsResult({"cpython.gc.generation": 0}, 1),
+            _SystemMetricsResult({"cpython.gc.generation": 1}, 2),
+            _SystemMetricsResult({"cpython.gc.generation": 2}, 3),
+        ]
+        self._test_metrics("cpython.gc.uncollectable_objects", expected)
 
     @mock.patch("psutil.Process.num_ctx_switches")
     def test_runtime_context_switches(self, mock_process_num_ctx_switches):

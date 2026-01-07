@@ -36,7 +36,9 @@ following metrics are configured:
         "system.thread_count": None
         "process.runtime.memory": ["rss", "vms"],
         "process.runtime.cpu.time": ["user", "system"],
-        "process.runtime.gc_count": None,
+        "process.runtime.gc.collections": None,
+        "process.runtime.gc.collected_objects": None,
+        "process.runtime.gc.uncollectable_objects": None,
         "process.runtime.thread_count": None,
         "process.runtime.cpu.utilization": None,
         "process.runtime.context_switches": ["involuntary", "voluntary"],
@@ -91,6 +93,14 @@ from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 from opentelemetry.instrumentation.system_metrics.package import _instruments
 from opentelemetry.instrumentation.system_metrics.version import __version__
 from opentelemetry.metrics import CallbackOptions, Observation, get_meter
+from opentelemetry.semconv._incubating.attributes.cpython_attributes import (
+    CPYTHON_GC_GENERATION,
+)
+from opentelemetry.semconv._incubating.metrics.cpython_metrics import (
+    CPYTHON_GC_COLLECTED_OBJECTS,
+    CPYTHON_GC_COLLECTIONS,
+    CPYTHON_GC_UNCOLLECTABLE_OBJECTS,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -113,7 +123,9 @@ _DEFAULT_CONFIG = {
     "system.thread_count": None,
     "process.runtime.memory": ["rss", "vms"],
     "process.runtime.cpu.time": ["user", "system"],
-    "process.runtime.gc_count": None,
+    "process.runtime.gc.collections": None,
+    "process.runtime.gc.collected_objects": None,
+    "process.runtime.gc.uncollectable_objects": None,
     "process.runtime.thread_count": None,
     "process.runtime.cpu.utilization": None,
     "process.runtime.context_switches": ["involuntary", "voluntary"],
@@ -165,7 +177,9 @@ class SystemMetricsInstrumentor(BaseInstrumentor):
 
         self._runtime_memory_labels = self._labels.copy()
         self._runtime_cpu_time_labels = self._labels.copy()
-        self._runtime_gc_count_labels = self._labels.copy()
+        self._runtime_gc_collections_labels = self._labels.copy()
+        self._runtime_gc_collected_objects_labels = self._labels.copy()
+        self._runtime_gc_uncollectable_objects_labels = self._labels.copy()
         self._runtime_thread_count_labels = self._labels.copy()
         self._runtime_cpu_utilization_labels = self._labels.copy()
         self._runtime_context_switches_labels = self._labels.copy()
@@ -359,17 +373,43 @@ class SystemMetricsInstrumentor(BaseInstrumentor):
                 unit="seconds",
             )
 
-        if "process.runtime.gc_count" in self._config:
+        if "process.runtime.gc.collections" in self._config:
             if self._python_implementation == "pypy":
                 _logger.warning(
-                    "The process.runtime.gc_count metric won't be collected because the interpreter is PyPy"
+                    "The cpython.gc.collections metric won't be collected because the interpreter is PyPy"
                 )
             else:
                 self._meter.create_observable_counter(
-                    name=f"process.runtime.{self._python_implementation}.gc_count",
-                    callbacks=[self._get_runtime_gc_count],
-                    description=f"Runtime {self._python_implementation} GC count",
-                    unit="bytes",
+                    name=CPYTHON_GC_COLLECTIONS,
+                    callbacks=[self._get_runtime_gc_collections],
+                    description="The number of times a generation was collected since interpreter start",
+                    unit="{collection}",
+                )
+
+        if "process.runtime.gc.collected_objects" in self._config:
+            if self._python_implementation == "pypy":
+                _logger.warning(
+                    "The cpython.gc.collected_objects metric won't be collected because the interpreter is PyPy"
+                )
+            else:
+                self._meter.create_observable_counter(
+                    name=CPYTHON_GC_COLLECTED_OBJECTS,
+                    callbacks=[self._get_runtime_gc_collected_objects],
+                    description="The total number of objects collected inside a generation since interpreter start",
+                    unit="{object}",
+                )
+
+        if "process.runtime.gc.uncollectable_objects" in self._config:
+            if self._python_implementation == "pypy":
+                _logger.warning(
+                    "The cpython.gc.uncollectable_objects metric won't be collected because the interpreter is PyPy"
+                )
+            else:
+                self._meter.create_observable_counter(
+                    name=CPYTHON_GC_UNCOLLECTABLE_OBJECTS,
+                    callbacks=[self._get_runtime_gc_uncollectable_objects],
+                    description="The total number of objects which were found to be uncollectable inside a generation since interpreter start",
+                    unit="{object}",
                 )
 
         if "process.runtime.thread_count" in self._config:
@@ -689,13 +729,44 @@ class SystemMetricsInstrumentor(BaseInstrumentor):
                     self._runtime_cpu_time_labels.copy(),
                 )
 
-    def _get_runtime_gc_count(
+    def _get_runtime_gc_collections(
         self, options: CallbackOptions
     ) -> Iterable[Observation]:
-        """Observer callback for garbage collection"""
-        for index, count in enumerate(gc.get_count()):
-            self._runtime_gc_count_labels["count"] = str(index)
-            yield Observation(count, self._runtime_gc_count_labels.copy())
+        """Observer callback for garbage collection collections count"""
+        for generation, stats in enumerate(gc.get_stats()):
+            self._runtime_gc_collections_labels[CPYTHON_GC_GENERATION] = (
+                generation
+            )
+            yield Observation(
+                stats["collections"],
+                self._runtime_gc_collections_labels.copy(),
+            )
+
+    def _get_runtime_gc_collected_objects(
+        self, options: CallbackOptions
+    ) -> Iterable[Observation]:
+        """Observer callback for garbage collection collected objects count"""
+        for generation, stats in enumerate(gc.get_stats()):
+            self._runtime_gc_collected_objects_labels[CPYTHON_GC_GENERATION] = (
+                generation
+            )
+            yield Observation(
+                stats["collected"],
+                self._runtime_gc_collected_objects_labels.copy(),
+            )
+
+    def _get_runtime_gc_uncollectable_objects(
+        self, options: CallbackOptions
+    ) -> Iterable[Observation]:
+        """Observer callback for garbage collection uncollectable objects count"""
+        for generation, stats in enumerate(gc.get_stats()):
+            self._runtime_gc_uncollectable_objects_labels[
+                CPYTHON_GC_GENERATION
+            ] = generation
+            yield Observation(
+                stats["uncollectable"],
+                self._runtime_gc_uncollectable_objects_labels.copy(),
+            )
 
     def _get_runtime_thread_count(
         self, options: CallbackOptions

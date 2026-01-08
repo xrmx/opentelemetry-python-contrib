@@ -1,0 +1,11 @@
+fastapi
+flask
+pytest
+testcontainers
+uvicorn
+-e instrumentation/opentelemetry-instrumentation-asgi
+-e instrumentation/opentelemetry-instrumentation-fastapi
+-e instrumentation/opentelemetry-instrumentation-flask
+-e instrumentation/opentelemetry-instrumentation-wsgi
+-e opentelemetry-instrumentation
+-e util/opentelemetry-util-http

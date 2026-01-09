@@ -1,4 +1,5 @@
 import json
+import os
 import os.path
 import shutil
 import subprocess
@@ -83,6 +84,10 @@ def flask_fixture():  # weaver_container_v1_36):
         opentelemetry_instrumentation
         + ["flask", "run", "-p", f"{FLASK_PORT}"],
         cwd=application_path,
+        env={
+            **os.environ,
+            "OTEL_SEMCONV_STABILITY_OPT_IN": "http",
+        },  # use stable http semconv
     )
 
     time.sleep(1)
@@ -117,3 +122,12 @@ def test_flask_request(weaver_binary, flask_fixture):
 
     assert report
     assert report["span"]
+
+    span_attributes_violations = [
+        advice["message"]
+        for attribute in report["span"]["attributes"]
+        for advice in attribute["live_check_result"]["all_advice"]
+        if advice["level"] == "violation"
+    ]
+
+    assert span_attributes_violations == []

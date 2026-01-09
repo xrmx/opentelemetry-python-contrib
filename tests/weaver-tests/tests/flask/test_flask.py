@@ -1,3 +1,4 @@
+import json
 import os.path
 import shutil
 import subprocess
@@ -9,14 +10,60 @@ from weaver_container import WeaverContainer
 
 FLASK_PORT = 5000
 
+DIR = os.path.join(os.path.dirname(__file__))
+
 
 @pytest.fixture(scope="function")
 def weaver_container_v1_36():
     weaver = WeaverContainer(
         schema_version="1.36.0",
+        templates_dir=os.path.join(DIR, "../templates"),
     )
     yield weaver.start(timeout=20)
     weaver.stop()
+
+
+@pytest.fixture()
+def weaver_binary():
+    # FIXME: don't hardcode weaver bin path
+    weaver_bin = "/home/rm/src/weaver/./target/release/weaver"
+    application_path = os.path.join(os.path.dirname(__file__))
+
+    weaver = subprocess.Popen(
+        [
+            weaver_bin,
+            "registry",
+            "live-check",
+            "--inactivity-timeout=10",  # FIXME: don't hardcode timeout
+            "--format=json",
+            "--no-stats",
+            "--output",
+            DIR,
+        ],
+        cwd=application_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    time.sleep(2)
+
+    ready = False
+    for i in range(10):
+        try:
+            response = requests.post("http://localhost:4320", timeout=5)
+        except Exception:
+            continue
+        if response.status_code == 404:
+            ready = True
+            break
+        time.sleep(0.5)
+
+    if not ready:
+        weaver.terminate()
+        weaver.wait(timeout=5)
+        raise Exception("sad trombone")
+
+    yield weaver
 
 
 @pytest.fixture
@@ -26,10 +73,11 @@ def flask_fixture():  # weaver_container_v1_36):
     opentelemetry_instrumentation = [
         wrapper,
         "--metric_export_interval",
-        "1000",
+        "4000",
         # "--exporter_otlp_endpoint",
         # otlp_endpoint,
     ]
+
     application_path = os.path.join(os.path.dirname(__file__))
     handler = subprocess.Popen(
         opentelemetry_instrumentation
@@ -47,15 +95,25 @@ def flask_fixture():  # weaver_container_v1_36):
     handler.wait(timeout=5)
 
 
-def test_flask_request(flask_fixture):  # , weaver_container_v1_36):
+def test_flask_request(weaver_binary, flask_fixture):
     response = requests.get(f"http://127.0.0.1:{FLASK_PORT}/rolldice")
     assert response.status_code == 200
 
     response = requests.get(f"http://127.0.0.1:{FLASK_PORT}/")
     assert response.status_code == 404
 
-    """
-    full_report = weaver_container_v1_36.end_live_check()
+    # 5 seconds are needed to avoid grpc errors
+    time.sleep(5)
 
-    assert full_report
-    """
+    # stop weaver
+    requests.post("http://localhost:4320/stop")
+
+    outs, errs = weaver_binary.communicate(timeout=5)
+
+    report_path = os.path.join(DIR, "live_check.json")
+    with open(report_path, "r") as f:
+        report_content = f.read()
+        report = json.loads(report_content)
+
+    assert report
+    assert report["span"]

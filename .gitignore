@@ -61,3 +61,6 @@ target
 
 # Benchmark result files
 *-benchmark.json
+
+# weaver registry live check output
+live_check.json

@@ -134,7 +134,7 @@ def test_flask_request(weaver_binary, flask_fixture):
         assert span_attributes_violations == []
 
     if "metric" in report:
-        span_attributes_violations = [
+        metric_attributes_violations = [
             (advice["signal_name"], advice["message"])
             for data_point in report["metric"]["data_points"]
             for attribute in data_point["attributes"]
@@ -142,4 +142,4 @@ def test_flask_request(weaver_binary, flask_fixture):
             if advice["level"] == "violation"
         ]
 
-        assert span_attributes_violations == []
+        assert metric_attributes_violations == []

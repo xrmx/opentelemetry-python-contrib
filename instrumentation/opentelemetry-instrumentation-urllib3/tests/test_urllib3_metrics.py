@@ -16,7 +16,7 @@ import io
 from timeit import default_timer
 from unittest import mock
 
-import httpretty
+import pytest
 import urllib3
 import urllib3.exceptions
 from urllib3 import encode_multipart_formdata
@@ -31,6 +31,16 @@ from opentelemetry.test.httptest import HttpTestBase
 from opentelemetry.test.test_base import TestBase
 
 SCOPE = "opentelemetry.instrumentation.urllib3"
+
+pytestmark = pytest.mark.urllib3_mock(
+    assert_all_responses_were_requested=False
+)
+
+
+@pytest.fixture(autouse=True)
+def _inject_urllib3_mock(request, urllib3_mock):
+    if request.instance is not None:
+        request.instance.urllib3_mock = urllib3_mock
 
 
 class TestURLLib3InstrumentorMetric(HttpTestBase, TestBase):
@@ -57,9 +67,18 @@ class TestURLLib3InstrumentorMetric(HttpTestBase, TestBase):
         _OpenTelemetrySemanticConventionStability._initialized = False
         self.env_patch.start()
         URLLib3Instrumentor().instrument()
-        httpretty.enable(allow_net_connect=False)
-        httpretty.register_uri(httpretty.GET, self.HTTP_URL, body="Hello!")
-        httpretty.register_uri(httpretty.POST, self.HTTP_URL, body="Hello!")
+        self.urllib3_mock.add_response(
+            method="GET",
+            url=self.HTTP_URL,
+            content=b"Hello!",
+            is_reusable=True,
+        )
+        self.urllib3_mock.add_response(
+            method="POST",
+            url=self.HTTP_URL,
+            content=b"Hello!",
+            is_reusable=True,
+        )
         self.pool = urllib3.PoolManager()
 
     def tearDown(self):
@@ -67,9 +86,6 @@ class TestURLLib3InstrumentorMetric(HttpTestBase, TestBase):
         self.env_patch.stop()
         self.pool.clear()
         URLLib3Instrumentor().uninstrument()
-
-        httpretty.disable()
-        httpretty.reset()
 
     def test_basic_metrics(self):
         start_time = default_timer()
@@ -345,10 +361,12 @@ class TestURLLib3InstrumentorMetric(HttpTestBase, TestBase):
             ],
         )
 
-    @mock.patch("httpretty.http.HttpBaseClass.METHODS", ("NONSTANDARD",))
     def test_basic_metrics_nonstandard_http_method(self):
-        httpretty.register_uri(
-            "NONSTANDARD", self.HTTP_URL, body="", status=405
+        self.urllib3_mock.add_response(
+            method="NONSTANDARD",
+            url=self.HTTP_URL,
+            content=b"",
+            status_code=405,
         )
 
         start_time = default_timer()
@@ -419,10 +437,12 @@ class TestURLLib3InstrumentorMetric(HttpTestBase, TestBase):
             ],
         )
 
-    @mock.patch("httpretty.http.HttpBaseClass.METHODS", ("NONSTANDARD",))
     def test_basic_metrics_nonstandard_http_method_new_semconv(self):
-        httpretty.register_uri(
-            "NONSTANDARD", self.HTTP_URL, body="", status=405
+        self.urllib3_mock.add_response(
+            method="NONSTANDARD",
+            url=self.HTTP_URL,
+            content=b"",
+            status_code=405,
         )
         start_time = default_timer()
         response = self.pool.request("NONSTANDARD", self.HTTP_URL)

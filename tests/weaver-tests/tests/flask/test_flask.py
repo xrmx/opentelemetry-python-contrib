@@ -7,21 +7,10 @@ import time
 
 import pytest
 import requests
-from weaver_container import WeaverContainer
 
 FLASK_PORT = 5000
 
 DIR = os.path.join(os.path.dirname(__file__))
-
-
-@pytest.fixture(scope="function")
-def weaver_container_v1_36():
-    weaver = WeaverContainer(
-        schema_version="1.36.0",
-        templates_dir=os.path.join(DIR, "../templates"),
-    )
-    yield weaver.start(timeout=20)
-    weaver.stop()
 
 
 @pytest.fixture()
@@ -68,8 +57,7 @@ def weaver_binary():
 
 
 @pytest.fixture
-def flask_fixture():  # weaver_container_v1_36):
-    # otlp_endpoint = weaver_container_v1_36.get_otlp_endpoint()
+def flask_fixture():
     wrapper = shutil.which("opentelemetry-instrument")
     opentelemetry_instrumentation = [
         wrapper,

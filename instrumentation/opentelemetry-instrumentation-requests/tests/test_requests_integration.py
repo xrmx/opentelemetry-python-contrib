@@ -188,7 +188,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 HTTP_METHOD: "GET",
                 HTTP_URL: self.URL,
                 HTTP_STATUS_CODE: 200,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
 
@@ -225,7 +225,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 NETWORK_PROTOCOL_VERSION: "1.1",
                 SERVER_PORT: 80,
                 NETWORK_PEER_PORT: 80,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
 
@@ -268,7 +268,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 NETWORK_PROTOCOL_VERSION: "1.1",
                 SERVER_PORT: 80,
                 NETWORK_PEER_PORT: 80,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
 
@@ -292,7 +292,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 HTTP_METHOD: "_OTHER",
                 HTTP_URL: self.URL,
                 HTTP_STATUS_CODE: 405,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
 
@@ -317,7 +317,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 NETWORK_PROTOCOL_VERSION: "1.1",
                 ERROR_TYPE: "405",
                 HTTP_REQUEST_METHOD_ORIGINAL: "NONSTANDARD",
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
         self.assertIs(span.status.status_code, trace.StatusCode.ERROR)
@@ -552,7 +552,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 HTTP_URL: self.URL,
                 HTTP_STATUS_CODE: 200,
                 "http.response.body": "Hello!",
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
 
@@ -583,7 +583,7 @@ class RequestsIntegrationTestBase(abc.ABC):
             {
                 HTTP_METHOD: "GET",
                 HTTP_URL: self.URL,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
@@ -611,7 +611,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 NETWORK_PEER_PORT: 80,
                 NETWORK_PEER_ADDRESS: "mock",
                 ERROR_TYPE: "RequestException",
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
@@ -634,7 +634,7 @@ class RequestsIntegrationTestBase(abc.ABC):
             {
                 HTTP_METHOD: "GET",
                 HTTP_URL: self.URL,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
@@ -658,7 +658,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 HTTP_METHOD: "GET",
                 HTTP_URL: self.URL,
                 HTTP_STATUS_CODE: 500,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
@@ -698,7 +698,7 @@ class RequestsIntegrationTestBase(abc.ABC):
                 "http.method": "GET",
                 "http.url": self.URL,
                 "http.status_code": 210,
-                USER_AGENT_ORIGINAL: "python-requests/2.32.3",
+                USER_AGENT_ORIGINAL: "python-requests/2.32.5",
             },
         )
 

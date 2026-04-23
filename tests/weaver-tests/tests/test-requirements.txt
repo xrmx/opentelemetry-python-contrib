@@ -1,7 +1,6 @@
 fastapi
 flask
 pytest
-testcontainers
 uvicorn
 -e instrumentation/opentelemetry-instrumentation-asgi
 -e instrumentation/opentelemetry-instrumentation-fastapi

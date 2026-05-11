@@ -1,5 +1,0 @@
-templates:
-  - template: full_report.j2
-    filter: .
-    file_name: full_report.json
-    application_mode: single

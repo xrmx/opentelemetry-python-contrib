@@ -1,4 +1,5 @@
 fastapi
+fastapi-cli
 flask
 pytest
 -e util/opentelemetry-util-http

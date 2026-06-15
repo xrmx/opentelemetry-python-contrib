@@ -66,6 +66,3 @@ target
 opentelemetry-admin-jobs.txt
 
 .claude/settings.local.json
-
-# weaver registry live check output
-live_check.json

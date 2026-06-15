@@ -1,7 +1,6 @@
 fastapi
 flask
 pytest
-uvicorn
 -e util/opentelemetry-util-http
 -e opentelemetry-distro
 -e opentelemetry-instrumentation

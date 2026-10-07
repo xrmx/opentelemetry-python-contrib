@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Generator, Mapping
 from logging import getLogger
 from typing import Any, Final
@@ -81,6 +82,7 @@ class OpAMPClient:
             non_identifying_attributes=agent_non_identifying_attributes,
         )
         self._sequence_num: int = 0
+        self._sequence_num_lock: threading.Lock = threading.Lock()
         self._instance_uid: bytes = uuid7().bytes
         self._remote_config_status: opamp_pb2.RemoteConfigStatus | None = None
         self._effective_config: opamp_pb2.EffectiveConfig | None = None
@@ -162,6 +164,16 @@ class OpAMPClient:
         data = messages.encode_message(message)
         return data
 
+    def _prepare_message(self, data: bytes) -> bytes:
+        """Assign the current envelope once, before the first send attempt."""
+        message = opamp_pb2.AgentToServer.FromString(data)
+        with self._sequence_num_lock:
+            message.sequence_num = self._sequence_num
+            message.instance_uid = self._instance_uid
+            data = messages.encode_message(message)
+            self._sequence_num += 1
+        return data
+
     def send(self, data: bytes):
         token = attach(set_value(_SUPPRESS_INSTRUMENTATION_KEY, True))
         try:
@@ -176,7 +188,6 @@ class OpAMPClient:
             )
             return response
         finally:
-            self._sequence_num += 1
             detach(token)
 
     @staticmethod

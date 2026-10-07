@@ -8,6 +8,7 @@ import logging
 from unittest import mock
 
 import pytest
+from google.protobuf.message import DecodeError
 
 from opentelemetry._opamp import messages
 from opentelemetry._opamp.client import _DEFAULT_CAPABILITIES, OpAMPClient
@@ -488,17 +489,48 @@ def test_build_full_state_message_no_config(client):
     assert message.effective_config.config_map.config_map == {}
 
 
-def test_message_sequence_num_increases_in_send(client):
+def test_preparing_messages_assigns_sequence_numbers_in_send_order(client: OpAMPClient) -> None:
+    first = client.build_heartbeat_message()
+    second = client.build_full_state_message()
+    assert client._sequence_num == 0
+
+    prepared = [client._prepare_message(second), client._prepare_message(first)]
+
+    assert [opamp_pb2.AgentToServer.FromString(data).sequence_num for data in prepared] == [0, 1]
+    assert opamp_pb2.AgentToServer.FromString(prepared[0]).HasField("agent_description")
+
+
+def test_preparing_message_refreshes_instance_uid_and_preserves_payload(client: OpAMPClient) -> None:
+    status = client.update_remote_config_status(
+        remote_config_hash=b"1234", status=opamp_pb2.RemoteConfigStatuses_APPLIED
+    )
+    assert status is not None
+    data = client.build_remote_config_status_response_message(status)
+    client._instance_uid = b"1" * 16
+
+    message = opamp_pb2.AgentToServer.FromString(client._prepare_message(data))
+
+    assert message.instance_uid == b"1" * 16
+    assert message.remote_config_status == status
+    assert message.capabilities == _DEFAULT_CAPABILITIES
+
+
+def test_send_does_not_advance_sequence_number_on_success_or_failure(client: OpAMPClient) -> None:
     client._transport = mock.Mock()
-    for index in range(2):
-        data = client.build_heartbeat_message()
+    data = client._prepare_message(client.build_heartbeat_message())
+    client.send(data)
+    client._transport.send.side_effect = ConnectionError
+    with pytest.raises(ConnectionError):
         client.send(data)
 
-        message = opamp_pb2.AgentToServer()
-        message.ParseFromString(data)
+    assert client._sequence_num == 1
 
-        assert message
-        assert message.sequence_num == index
+
+def test_invalid_message_does_not_consume_sequence_number(client: OpAMPClient) -> None:
+    with pytest.raises(DecodeError):
+        client._prepare_message(b"invalid")
+
+    assert client._sequence_num == 0
 
 
 def test_send(client):

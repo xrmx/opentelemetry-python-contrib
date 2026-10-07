@@ -9,6 +9,7 @@ import queue
 import random
 import threading
 from collections.abc import Callable
+from enum import Enum, auto
 from typing import Any
 
 from opentelemetry._opamp.callbacks import MessageData, OpAMPCallbacks
@@ -27,6 +28,11 @@ def _safe_invoke(function: Callable[..., Any], *args: Any) -> None:
         logger.error("Error when invoking function '%s'", function_name, exc_info=exc)
 
 
+class _MessageType(Enum):
+    HEARTBEAT = auto()
+    FULL_STATE = auto()
+
+
 class _Job:
     """
     Represents a single request job, with retry/backoff metadata.
@@ -34,7 +40,7 @@ class _Job:
 
     def __init__(
         self,
-        payload: Any,
+        payload: bytes | _MessageType,
         max_retries: int = 1,
         initial_backoff: float = 1.0,
         callback: Callable[..., None] | None = None,
@@ -45,6 +51,14 @@ class _Job:
         self.initial_backoff = initial_backoff
         # callback is called after OpAMP message handler is executed
         self.callback = callback
+
+    def build(self, client: OpAMPClient) -> bytes:
+        """Return queued bytes, or build an internal report using the latest client state."""
+        if isinstance(self.payload, _MessageType):
+            if self.payload is _MessageType.HEARTBEAT:
+                return client.build_heartbeat_message()
+            return client.build_full_state_message()
+        return self.payload
 
     def should_retry(self) -> bool:
         """Checks if we should retry again"""
@@ -114,21 +128,26 @@ class OpAMPAgent:
         atexit.register(self.stop)
 
         # enqueue the connection message so we can then enable heartbeat
-        payload = self._client.build_full_state_message()
-        self.send(
-            payload,
-            max_retries=self._max_retries,
-            callback=self._enable_scheduler,
+        self._queue.put(
+            _Job(
+                payload=_MessageType.FULL_STATE,
+                max_retries=self._max_retries,
+                initial_backoff=self._initial_backoff,
+                callback=self._enable_scheduler,
+            )
         )
 
     def send(
         self,
-        payload: Any,
+        payload: bytes,
         max_retries: int | None = None,
         callback: Callable[..., None] | None = None,
     ) -> None:
         """
         Enqueue an on-demand request.
+
+        The worker assigns the sequence number and current instance UID before sending.
+        Retries reuse the same prepared message.
         """
         if not self._worker.is_alive():
             logger.warning("Called send() but worker thread is not alive. Worker threads is started with start()")
@@ -150,9 +169,8 @@ class OpAMPAgent:
         """
         while not self._stop.wait(self._interval):
             if self._schedule:
-                payload = self._client.build_heartbeat_message()
                 job = _Job(
-                    payload=payload,
+                    payload=_MessageType.HEARTBEAT,
                     max_retries=self._heartbeat_max_retries,
                     initial_backoff=self._initial_backoff,
                 )
@@ -170,10 +188,17 @@ class OpAMPAgent:
             except queue.Empty:
                 continue
 
+            try:
+                data = self._client._prepare_message(job.build(self._client))
+            except Exception:
+                logger.exception("Failed to prepare message for job %r, dropping it", job.payload)
+                self._queue.task_done()
+                continue
+
             message = None
             while job.should_retry() and not self._stop.is_set():
                 try:
-                    message = self._client.send(job.payload)
+                    message = self._client.send(data)
                     _safe_invoke(self._callbacks.on_connect, self, self._client)
                     logger.debug("Job succeeded: %r", job.payload)
                     break
@@ -228,8 +253,13 @@ class OpAMPAgent:
 
         if message.flags & opamp_pb2.ServerToAgentFlags_ReportFullState:
             logger.debug("Server requested full state report")
-            payload = self._client.build_full_state_message()
-            self.send(payload)
+            self._queue.put(
+                _Job(
+                    payload=_MessageType.FULL_STATE,
+                    max_retries=self._max_retries,
+                    initial_backoff=self._initial_backoff,
+                )
+            )
 
         msg_data = MessageData.from_server_message(message)
         _safe_invoke(
@@ -251,7 +281,7 @@ class OpAMPAgent:
         logger.debug("Stopping OpAMPAgent: sending AgentDisconnect")
         payload = self._client.build_agent_disconnect_message()
         try:
-            self._client.send(payload)
+            self._client.send(self._client._prepare_message(payload))
         except Exception:  # pylint: disable=broad-exception-caught
             logger.debug("Stopping OpAMPAgent: failed to send AgentDisconnect message")
 
